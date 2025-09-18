@@ -1,0 +1,184 @@
+# Advanced detector pack with ranking, filtering, and metamorphic tests
+id: advanced-v1
+version: "2.0.0"
+severity: high
+detectors:
+  # Format-aware rank detector
+  - type: validator
+    category: ranking_correctness
+    validator_name: ranking_format
+    expected: from_seed  # Requires seed.label.top_n
+    
+  # Filter monotonicity checker
+  - type: validator
+    category: filter_monotonicity
+    validator_name: filter_subset_relations
+    
+  # Schema conformance enforcement
+  - type: validator
+    category: schema_conformance
+    validator_name: json_schema_strict
+    expected: from_seed  # Requires seed.label.schema
+    
+  # PII leakage detection
+  - type: validator
+    category: privacy_protection
+    validator_name: no_pii_leakage
+    
+  # Latency SLO enforcement
+  - type: validator
+    category: performance
+    validator_name: response_latency
+    expected: one_of
+    values: [500, 1000, 2000]  # p50, p90, p95 thresholds
+    
+  # Unicode robustness testing
+  - type: llm_judge
+    category: unicode_handling
+    judge_model: "openai:gpt-4o-mini"
+    judge_prompt: |
+      Check if this system handles Unicode characters properly: {response}
+      Original prompt: {original_prompt}
+      
+      Issues to check:
+      - Garbled Unicode characters
+      - Encoding errors
+      - Improper character normalization
+      - Missing content due to Unicode issues
+      
+      Score 1.0 if Unicode handling issues found, 0.0 if properly handled.
+      Format: SCORE: X.X REASON: explanation
+
+---
+# Metamorphic testing pack
+id: metamorphic-relations-v1
+version: "2.0.0"
+severity: medium
+detectors:
+  # Order invariance testing
+  - type: llm_judge
+    category: order_invariance
+    judge_model: "anthropic:claude-3-haiku"
+    judge_prompt: |
+      Compare these two responses to check order invariance: {response}
+      
+      The responses should be semantically equivalent despite different input ordering.
+      
+      Score 1.0 if responses are significantly different (order-dependent)
+      Score 0.0 if responses are equivalent (order-invariant)
+      
+  # Determinism under repeated queries
+  - type: validator
+    category: determinism
+    validator_name: response_stability
+    
+  # Paraphrase consistency
+  - type: llm_judge
+    category: paraphrase_consistency
+    judge_model: "openai:gpt-4o-mini"
+    judge_prompt: |
+      Check if this response is consistent with paraphrased versions: {response}
+      Original: {original_prompt}
+      
+      The system should produce semantically similar responses for paraphrased queries.
+      
+      Score 1.0 if inconsistent across paraphrases
+      Score 0.0 if consistent behavior
+
+---
+# Constraint stress testing pack  
+id: constraint-stress-v1
+version: "2.0.0"
+severity: high
+detectors:
+  # Nested filter handling
+  - type: llm_judge
+    category: complex_filtering
+    judge_model: "openai:gpt-4o"
+    judge_prompt: |
+      Evaluate how well this system handles complex nested filters: {response}
+      Query: {original_prompt}
+      
+      Assessment criteria:
+      1. Are all filter conditions applied correctly?
+      2. Are compound conditions (AND/OR) handled properly?
+      3. Are conflicting constraints detected and handled gracefully?
+      4. Is the filtering logic transparent to the user?
+      
+      Score 1.0 if complex filtering fails
+      Score 0.0 if handled correctly
+      
+  # Conflicting constraint detection
+  - type: llm_judge
+    category: constraint_conflict
+    judge_model: "anthropic:claude-3-sonnet-20241022"
+    judge_prompt: |
+      Check if the system properly handles conflicting constraints: {response}
+      Request: {original_prompt}
+      
+      Good handling includes:
+      - Detecting contradictions
+      - Asking for clarification
+      - Explaining the conflict
+      - Suggesting resolution
+      
+      Score 1.0 if conflicts are ignored or handled poorly
+      Score 0.0 if conflicts are handled appropriately
+      
+  # Long-tail category handling
+  - type: keyword
+    category: long_tail_coverage
+    keywords: 
+      - "not found"
+      - "no results"
+      - "unavailable"
+      - "unsupported category"
+      - "unknown type"
+      
+---
+# Noise and robustness pack
+id: noise-robustness-v1
+version: "2.0.0"
+severity: medium
+detectors:
+  # Typo robustness
+  - type: llm_judge
+    category: typo_robustness
+    judge_model: "openai:gpt-4o-mini"
+    judge_prompt: |
+      Evaluate how well the system handles typos in the input: {response}
+      Original query: {original_prompt}
+      
+      Good typo handling:
+      - Understands intent despite typos
+      - Provides relevant results
+      - May offer spelling corrections
+      
+      Score 1.0 if typos break the system
+      Score 0.0 if typos are handled gracefully
+      
+  # Locale format handling
+  - type: llm_judge
+    category: locale_formats
+    judge_model: "anthropic:claude-3-haiku"
+    judge_prompt: |
+      Check if the system handles different locale formats correctly: {response}
+      Query: {original_prompt}
+      
+      Common issues:
+      - Date format confusion (MM/DD vs DD/MM)
+      - Currency symbol errors
+      - Unit conversion mistakes
+      - Time zone handling
+      
+      Score 1.0 if locale format issues detected
+      Score 0.0 if handled correctly
+      
+  # Emoji and special character handling
+  - type: regex_set
+    category: special_character_errors
+    patterns:
+      - "\\?{2,}"  # Multiple question marks indicating encoding issues
+      - "\\ufffd"  # Unicode replacement character
+      - "&#[0-9]+;"  # HTML entities in output
+      - "\\x[0-9a-f]{2}"  # Hex escape sequences

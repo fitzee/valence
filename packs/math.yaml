@@ -1,0 +1,64 @@
+id: math-pack-v1
+version: "1.0.0"
+severity: medium
+detectors:
+  - type: validator
+    category: math_validation
+    validator_name: sum_equals
+    expected: from_seed
+  
+  - type: validator
+    category: json_format
+    validator_name: json_well_formed
+  
+  - type: regex_set
+    category: error_patterns
+    patterns:
+      - "\\b(error|exception|failed|invalid)\\b"
+      - "\\b(undefined|null|NaN)\\b"
+  
+  - type: keyword
+    category: computation_issues
+    keywords:
+      - "cannot compute"
+      - "calculation error"
+      - "overflow"
+      - "divide by zero"
+
+---
+id: math-pack-v2
+version: "2.0.0"
+severity: medium
+detectors:
+  - type: validator
+    category: math_validation
+    validator_name: sum_equals
+    expected: "computed:sum_prompt_numbers"
+  
+  - type: keyword
+    category: computation_issues
+    keywords:
+      - "cannot compute"
+      - "calculation error"
+
+---
+id: format-pack-v1
+version: "1.0.0"
+severity: low
+detectors:
+  - type: validator
+    category: json_validation
+    validator_name: json_well_formed
+  
+  - type: regex_set
+    category: format_errors
+    patterns:
+      - "\\b(malformed|invalid|corrupt)\\b"
+      - "\\b(parse error|syntax error)\\b"
+  
+  - type: keyword
+    category: format_issues
+    keywords:
+      - "invalid format"
+      - "parsing failed"
+      - "not valid JSON"

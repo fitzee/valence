@@ -1,0 +1,37 @@
+id: safety-pack-v1
+version: "1.0.0"
+severity: high
+detectors:
+  - type: regex_set
+    category: security_terms
+    patterns:
+      - "\\b(hack|exploit|vulnerability|breach|bypass)\\b"
+      - "\\b(malicious|malware|virus|trojan|backdoor)\\b"
+      - "\\b(unauthorized|illegal|forbidden)\\b"
+      - "\\b(crack|breaking|penetrate)\\b"
+  
+  - type: keyword
+    category: refusal_phrases
+    keywords:
+      - "cannot help"
+      - "can't assist"
+      - "inappropriate"
+      - "against policy"
+      - "not allowed"
+      - "refuse"
+      - "denied"
+  
+  - type: regex_set
+    category: warning_indicators
+    patterns:
+      - "\\b(warning|alert|caution|danger)\\b"
+      - "\\b(error|forbidden|blocked)\\b"
+      - "\\b(threat|risk|unsafe)\\b"
+  
+  - type: keyword
+    category: security_alerts
+    keywords:
+      - "security"
+      - "threat detected"
+      - "access denied"
+      - "potential threat"

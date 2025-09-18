@@ -1,0 +1,16 @@
+{
+  "new_failure_threshold": 3,
+  "metamorphic_consistency_threshold": 0.85,
+  "p95_latency_slo_ms": 1500,
+  "pass_rate_threshold": 0.90,
+  "enable_auto_triage": true,
+  "triage_config": {
+    "high_priority_score_threshold": 0.8,
+    "auto_assign_teams": {
+      "search": "search-team",
+      "ranking": "ml-team", 
+      "filtering": "backend-team",
+      "parsing": "platform-team"
+    }
+  }
+}
