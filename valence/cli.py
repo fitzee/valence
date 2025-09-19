@@ -157,7 +157,7 @@ def report(
         console.print(f"  Input: {input}")
         console.print(f"  Output: {output}")
         
-        generate_report(input_dir=input, output_path=output)
+        generate_report(run_dir=input, output_path=output)
         
         console.print(f"\n[green]✓ Report generated![/green]")
         console.print(f"  View report: {output}")

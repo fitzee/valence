@@ -28,8 +28,9 @@ class Severity(str, Enum):
 class Outcome(str, Enum):
     """Evaluation outcome status."""
 
-    PASS = "pass"
-    FAIL = "fail"
+    WEAK = "weak"
+    MILD = "mild"
+    STRONG = "strong"
     ERROR = "error"
 
 

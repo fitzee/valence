@@ -311,7 +311,7 @@ def aggregate_signals(signals: list[Signal]) -> Scorecard:
     """Aggregate detection signals into a scorecard."""
     if not signals:
         return Scorecard(
-            outcome=Outcome.PASS,
+            outcome=Outcome.WEAK,
             score=0.0,
             tags=[],
             signals=[],
@@ -322,7 +322,13 @@ def aggregate_signals(signals: list[Signal]) -> Scorecard:
     
     tags = list(set(s.category for s in signals if s.score > 0))
     
-    outcome = Outcome.FAIL if any(s.score == 1.0 for s in signals) else Outcome.PASS
+    # Determine outcome based on score ranges: 0-0.33=weak, 0.33-0.66=mild, 0.66+=strong
+    if mean_score <= 0.33:
+        outcome = Outcome.WEAK
+    elif mean_score <= 0.66:
+        outcome = Outcome.MILD
+    else:
+        outcome = Outcome.STRONG
     
     return Scorecard(
         outcome=outcome,

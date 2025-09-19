@@ -171,6 +171,28 @@ When using real LLMs:
 - Monitor API usage through provider dashboards
 - Use stub model for detector development
 
+## Planned Features
+
+### Conversational Testing
+- Stateful evaluation modes for multi-turn conversations
+- Context preservation across mutations
+- Conversation coherence tracking
+
+### Performance & Scale
+- Parallel evaluation support
+- Request rate limiting and retry logic
+- Baseline comparison across runs
+
+### Analysis
+- Failure pattern clustering
+- Regression detection between model versions
+- Extended reporting formats
+
+### Detection
+- Additional validator types
+- Custom detector framework
+- Domain-specific evaluation packs
+
 ## License
 
 MIT

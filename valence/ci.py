@@ -59,7 +59,7 @@ def calculate_new_failures(
     new_failures = []
     
     for eval_record in current_evals:
-        if eval_record.scorecard and eval_record.scorecard.outcome == Outcome.FAIL:
+        if eval_record.scorecard and eval_record.scorecard.outcome == Outcome.STRONG:
             tags = set(eval_record.scorecard.tags)
             fingerprint = compute_failure_fingerprint(
                 eval_record.prompt,
@@ -102,9 +102,9 @@ def calculate_metamorphic_consistency_score(evals: List[EvalRecord]) -> float:
             total_families_with_mutations += 1
             outcomes = [r.scorecard.outcome for r in family_records if r.scorecard]
             
-            # Consistent if all pass or all fail
-            if outcomes and (all(o == Outcome.PASS for o in outcomes) or 
-                           all(o == Outcome.FAIL for o in outcomes)):
+            # Consistent if all are weak (good) or all are strong (bad)
+            if outcomes and (all(o == Outcome.WEAK for o in outcomes) or 
+                           all(o == Outcome.STRONG for o in outcomes)):
                 consistent_families += 1
     
     return (consistent_families / total_families_with_mutations 
@@ -162,7 +162,7 @@ def check_ci_gates(
         baseline_fingerprints = set()
         
         for eval_record in baseline_evals:
-            if eval_record.scorecard and eval_record.scorecard.outcome == Outcome.FAIL:
+            if eval_record.scorecard and eval_record.scorecard.outcome == Outcome.STRONG:
                 tags = set(eval_record.scorecard.tags)
                 fingerprint = compute_failure_fingerprint(
                     eval_record.prompt,

@@ -254,7 +254,7 @@ def test_aggregate_signals_fail() -> None:
     ]
     
     scorecard = aggregate_signals(signals)
-    assert scorecard.outcome == Outcome.FAIL
+    assert scorecard.outcome == Outcome.STRONG  # score 2/3 ≈ 0.67 > 0.66 = STRONG
     assert scorecard.score == pytest.approx(2/3)
     assert set(scorecard.tags) == {"cat1"}
 
@@ -267,7 +267,7 @@ def test_aggregate_signals_pass() -> None:
     ]
     
     scorecard = aggregate_signals(signals)
-    assert scorecard.outcome == Outcome.PASS
+    assert scorecard.outcome == Outcome.WEAK  # score 0.0 ≤ 0.33 = WEAK
     assert scorecard.score == 0.0
     assert len(scorecard.tags) == 0
 
@@ -275,7 +275,7 @@ def test_aggregate_signals_pass() -> None:
 def test_aggregate_signals_empty() -> None:
     """Test aggregating empty signals."""
     scorecard = aggregate_signals([])
-    assert scorecard.outcome == Outcome.PASS
+    assert scorecard.outcome == Outcome.WEAK  # empty signals = score 0.0 = WEAK
     assert scorecard.score == 0.0
     assert len(scorecard.tags) == 0
 
@@ -330,7 +330,7 @@ def test_run_detectors_integration() -> None:
     response = "30 - This contains malicious hack code"
     
     scorecard = run_detectors(pack, prompt, response, None)
-    assert scorecard.outcome == Outcome.FAIL
+    assert scorecard.outcome == Outcome.STRONG  # scores [1.0, 1.0, 0.0] → mean ≈ 0.67 = STRONG
     assert "keywords" in scorecard.tags
     assert "patterns" in scorecard.tags
     assert len(scorecard.signals) == 3

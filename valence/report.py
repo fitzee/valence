@@ -1,332 +1,69 @@
 """HTML report generation for evaluation results."""
 
+import json
 import logging
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from jinja2 import Template
 
 from valence.schema import EvalRecord, Outcome, RunMetadata
-from valence.storage import RunStorage, StorageError
-from valence.util import compute_failure_fingerprint
+from valence.storage import RunStorage
 
 logger = logging.getLogger(__name__)
 
-HTML_TEMPLATE = """<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Valence Evaluation Report - {{ run_id }}</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            border-radius: 10px;
-            margin-bottom: 30px;
-        }
-        .header h1 {
-            margin: 0 0 10px 0;
-            font-size: 2.5em;
-        }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin: 20px 0;
-        }
-        .stat-card {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .stat-label {
-            font-size: 0.9em;
-            color: #666;
-            margin-bottom: 5px;
-        }
-        .stat-value {
-            font-size: 2em;
-            font-weight: bold;
-            color: #333;
-        }
-        .pass-rate {
-            color: {% if pass_rate > 70 %}#10b981{% elif pass_rate > 40 %}#f59e0b{% else %}#ef4444{% endif %};
-        }
-        .family {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            margin: 20px 0;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .family-header {
-            font-weight: bold;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #e5e7eb;
-        }
-        .family-tree {
-            margin-left: 20px;
-        }
-        .eval-item {
-            display: flex;
-            align-items: center;
-            padding: 8px 0;
-            border-bottom: 1px solid #f3f4f6;
-        }
-        .eval-item:last-child {
-            border-bottom: none;
-        }
-        .status-icon {
-            width: 24px;
-            height: 24px;
-            margin-right: 10px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            font-weight: bold;
-        }
-        .status-pass {
-            background: #d1fae5;
-            color: #065f46;
-        }
-        .status-fail {
-            background: #fee2e2;
-            color: #991b1b;
-        }
-        .status-error {
-            background: #fef3c7;
-            color: #92400e;
-        }
-        .prompt-text {
-            flex: 1;
-            font-family: monospace;
-            font-size: 0.9em;
-            color: #4b5563;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .mutation-tag {
-            background: #e5e7eb;
-            color: #374151;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.8em;
-            margin-left: 10px;
-        }
-        .insights {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            margin: 20px 0;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .insights h2 {
-            color: #4b5563;
-            margin-bottom: 15px;
-        }
-        .insight-item {
-            padding: 10px;
-            margin: 10px 0;
-            background: #f9fafb;
-            border-left: 4px solid #667eea;
-            border-radius: 4px;
-        }
-        table {
-            width: 100%;
-            background: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin: 20px 0;
-        }
-        th {
-            background: #f3f4f6;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-            color: #374151;
-        }
-        td {
-            padding: 12px;
-            border-top: 1px solid #e5e7eb;
-        }
-        tr:hover {
-            background: #f9fafb;
-        }
-        .detector-hits {
-            margin: 20px 0;
-        }
-        .timing-info {
-            margin: 20px 0;
-        }
-        footer {
-            text-align: center;
-            color: #6b7280;
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 1px solid #e5e7eb;
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Valence Evaluation Report</h1>
-        <div>Model: <strong>{{ model }}</strong> | Run ID: <strong>{{ run_id }}</strong></div>
-        <div>{{ timestamp }}</div>
-    </div>
 
-    <div class="stats">
-        <div class="stat-card">
-            <div class="stat-label">Total Evaluations</div>
-            <div class="stat-value">{{ total }}</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Pass Rate</div>
-            <div class="stat-value pass-rate">{{ "%.1f"|format(pass_rate) }}%</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Failures</div>
-            <div class="stat-value" style="color: #ef4444;">{{ failures }}</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Passes</div>
-            <div class="stat-value" style="color: #10b981;">{{ passes }}</div>
-        </div>
-    </div>
-
-    {% if families %}
-    <h2>Failure Families</h2>
-    {% for family in families %}
-    <div class="family">
-        <div class="family-header">
-            Parent: {{ family.parent.id }}
-            <span class="status-icon status-{{ family.parent.status }}">
-                {% if family.parent.status == 'pass' %}✓{% elif family.parent.status == 'fail' %}✗{% else %}!{% endif %}
-            </span>
-        </div>
-        <div class="eval-item">
-            <span class="prompt-text">{{ family.parent.prompt[:100] }}...</span>
-        </div>
-        {% if family.children %}
-        <div class="family-tree">
-            <div style="margin-top: 10px; font-weight: 600; color: #6b7280;">Mutations:</div>
-            {% for child in family.children %}
-            <div class="eval-item">
-                <span class="status-icon status-{{ child.status }}">
-                    {% if child.status == 'pass' %}✓{% elif child.status == 'fail' %}✗{% else %}!{% endif %}
-                </span>
-                <span class="prompt-text">{{ child.prompt[:80] }}...</span>
-                <span class="mutation-tag">{{ child.operator }}</span>
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-    </div>
-    {% endfor %}
-    {% endif %}
-
-    <div class="insights">
-        <h2>Insights</h2>
-        {% if fragile_prompts %}
-        <div class="insight-item">
-            <strong>Fragile Prompts:</strong> {{ fragile_prompts }} prompts failed but had passing mutations.
-            These represent opportunities where simple reformulations succeed.
-        </div>
-        {% endif %}
-        {% if persistent_failures %}
-        <div class="insight-item">
-            <strong>Persistent Failures:</strong> {{ persistent_failures }} prompts failed along with all mutations.
-            These represent systematic detection patterns that resist simple bypasses.
-        </div>
-        {% endif %}
-        <div class="insight-item">
-            <strong>Mutation Effectiveness:</strong> {{ "%.1f"|format(mutation_success_rate) }}% of mutations changed the outcome.
-        </div>
-    </div>
-
-    {% if detector_stats %}
-    <div class="detector-hits">
-        <h2>Top Detector Hits</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Category</th>
-                    <th>Hit Count</th>
-                    <th>Percentage</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for stat in detector_stats %}
-                <tr>
-                    <td>{{ stat.category }}</td>
-                    <td>{{ stat.count }}</td>
-                    <td>{{ "%.1f"|format(stat.percentage) }}%</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    <div class="timing-info">
-        <h2>Performance Metrics</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Metric</th>
-                    <th>Value</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Total Duration</td>
-                    <td>{{ "%.2f"|format(total_duration_s) }} seconds</td>
-                </tr>
-                <tr>
-                    <td>Average Eval Time</td>
-                    <td>{{ "%.2f"|format(avg_eval_ms) }} ms</td>
-                </tr>
-                <tr>
-                    <td>p95 Eval Time</td>
-                    <td>{{ "%.2f"|format(p95_eval_ms) }} ms</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-
-    <footer>
-        Generated by Valence v0.1.0
-    </footer>
-</body>
-</html>
-"""
+def generate_report(run_dir: Path, output_path: Path) -> None:
+    """Generate HTML report from evaluation results."""
+    try:
+        storage = RunStorage(run_dir)
+        evals = storage.load_evals()
+        metadata = storage.load_metadata()
+        
+        if not evals:
+            raise ValueError("No evaluation records found")
+        
+        # Build data structures
+        families = build_compact_families(evals)
+        insights = calculate_compact_insights(families, evals)
+        score_analysis = analyze_score_distributions(evals)
+        
+        # Generate report data
+        # Calculate corrected totals based on 1.0 threshold
+        total_strong = sum(1 for e in evals if e.scorecard and e.scorecard.score > 0.66)
+        total_weak = sum(1 for e in evals if e.scorecard and e.scorecard.score <= 0.33)
+        
+        report_data = {
+            "run_id": metadata.run_id if metadata else "unknown",
+            "model": metadata.model if metadata else "unknown",
+            "total_prompts": len(evals),
+            "total_strong": total_strong,
+            "total_weak": total_weak,
+            "families": families,
+            "insights": insights,
+            "score_analysis": score_analysis,
+            "evals": [eval_to_compact_dict(e) for e in evals],
+        }
+        
+        # Render template
+        template = Template(COMPACT_HTML_TEMPLATE)
+        html_content = template.render(**report_data)
+        
+        # Write output
+        output_path.write_text(html_content, encoding="utf-8")
+        logger.info(f"Report generated: {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Failed to generate report: {e}")
+        raise
 
 
-class ReportError(Exception):
-    """Report generation error."""
-    pass
-
-
-def build_families(evals: list[EvalRecord]) -> list[dict[str, Any]]:
-    """Build family trees from evaluation records."""
-    families = []
+def build_compact_families(evals: List[EvalRecord]) -> List[Dict[str, Any]]:
+    """Build family structures focused on mutations and scores."""
     parents = {}
     children = defaultdict(list)
+    all_records = {r.id: r for r in evals}
     
     for record in evals:
         if record.lineage.parent_id:
@@ -334,306 +71,653 @@ def build_families(evals: list[EvalRecord]) -> list[dict[str, Any]]:
         else:
             parents[record.id] = record
     
-    for parent_id, parent in parents.items():
-        if parent.scorecard and parent.scorecard.outcome == Outcome.FAIL:
-            family = {
-                "parent": {
-                    "id": parent.id,
-                    "prompt": parent.prompt,
-                    "status": parent.scorecard.outcome.value,
-                },
-                "children": [],
-            }
-            
-            for child in children.get(parent_id, []):
+    def build_mutation_tree(record_id: str, depth: int = 0) -> List[Dict[str, Any]]:
+        """Recursively build mutation tree for all generations."""
+        mutations = []
+        if record_id in children:
+            for child in children[record_id]:
                 if child.scorecard:
-                    family["children"].append({
+                    # Determine outcome based on score ranges
+                    if child.scorecard.score <= 0.33:
+                        child_corrected_outcome = "weak"
+                    elif child.scorecard.score <= 0.66:
+                        child_corrected_outcome = "mild"
+                    else:
+                        child_corrected_outcome = "strong"
+                    
+                    # Build signals list for mutation
+                    child_signals = []
+                    if child.scorecard:
+                        for signal in child.scorecard.signals:
+                            child_signals.append({
+                                "category": signal.category,
+                                "score": signal.score,
+                                "details": str(signal.details) if signal.details else ""
+                            })
+                    
+                    # Recursively get children of this child
+                    sub_mutations = build_mutation_tree(child.id, depth + 1)
+                    
+                    mutations.append({
                         "id": child.id,
-                        "prompt": child.prompt,
-                        "status": child.scorecard.outcome.value,
                         "operator": child.lineage.mutation_operator,
+                        "status": child_corrected_outcome,
+                        "score": child.scorecard.score,
+                        "prompt": child.prompt,
+                        "response": child.response or "",
+                        "duration_ms": child.duration_ms,
+                        "signals": child_signals,
+                        "generation": child.lineage.generation,
+                        "children": sub_mutations,  # Add nested children
                     })
-            
-            families.append(family)
+        return mutations
+    
+    families = []
+    for parent_id, parent in parents.items():
+        # Get all mutations recursively
+        mutations = build_mutation_tree(parent_id)
+        
+        # Determine parent outcome based on score ranges
+        if parent.scorecard and parent.scorecard.score <= 0.33:
+            parent_corrected_outcome = "weak"
+        elif parent.scorecard and parent.scorecard.score <= 0.66:
+            parent_corrected_outcome = "mild"
+        elif parent.scorecard:
+            parent_corrected_outcome = "strong"
+        else:
+            parent_corrected_outcome = "weak"
+        
+        # Build signals list for parent
+        parent_signals = []
+        if parent.scorecard:
+            for signal in parent.scorecard.signals:
+                parent_signals.append({
+                    "category": signal.category,
+                    "score": signal.score,
+                    "details": str(signal.details) if signal.details else ""
+                })
+        
+        family = {
+            "parent_id": parent_id,
+            "parent_status": parent_corrected_outcome,
+            "parent_score": parent.scorecard.score if parent.scorecard else 0.0,
+            "parent_prompt": parent.prompt,
+            "parent_response": parent.response or "",
+            "parent_signals": parent_signals,
+            "mutations": mutations,
+            "mutation_count": len(mutations),
+        }
+        families.append(family)
     
     return families
 
 
-def calculate_insights(families: list[dict[str, Any]]) -> dict[str, Any]:
-    """Calculate insights from failure families."""
-    fragile = 0
-    persistent = 0
-    total_mutations = 0
-    successful_mutations = 0
+def analyze_score_distributions(evals: List[EvalRecord]) -> Dict[str, Any]:
+    """Analyze score distributions to show distance from thresholds."""
+    scores = []
+    weak_scores = []
+    strong_scores = []
     
-    for family in families:
-        if not family["children"]:
-            continue
-        
-        child_outcomes = [c["status"] for c in family["children"]]
-        total_mutations += len(child_outcomes)
-        
-        passing_children = sum(1 for o in child_outcomes if o == "pass")
-        successful_mutations += passing_children
-        
-        if passing_children > 0:
-            fragile += 1
-        elif all(o == "fail" for o in child_outcomes):
-            persistent += 1
-    
-    mutation_success_rate = (
-        (successful_mutations / total_mutations * 100) if total_mutations > 0 else 0
-    )
-    
-    return {
-        "fragile_prompts": fragile,
-        "persistent_failures": persistent,
-        "mutation_success_rate": mutation_success_rate,
-    }
-
-
-def calculate_detector_stats(evals: list[EvalRecord]) -> list[dict[str, Any]]:
-    """Calculate detector hit statistics."""
-    category_counts = Counter()
-    total_failures = 0
-    
-    for record in evals:
-        if record.scorecard and record.scorecard.outcome == Outcome.FAIL:
-            total_failures += 1
-            for tag in record.scorecard.tags:
-                category_counts[tag] += 1
-    
-    stats = []
-    for category, count in category_counts.most_common(10):
-        percentage = (count / total_failures * 100) if total_failures > 0 else 0
-        stats.append({
-            "category": category,
-            "count": count,
-            "percentage": percentage,
-        })
-    
-    return stats
-
-
-def calculate_timing_stats(
-    evals: list[EvalRecord], metadata: Optional[RunMetadata]
-) -> dict[str, float]:
-    """Calculate timing statistics."""
-    durations = [e.duration_ms for e in evals if e.duration_ms is not None]
-    
-    if not durations:
-        return {
-            "total_duration_s": 0.0,
-            "avg_eval_ms": 0.0,
-            "p95_eval_ms": 0.0,
-        }
-    
-    durations.sort()
-    avg_ms = sum(durations) / len(durations)
-    p95_index = int(len(durations) * 0.95)
-    p95_ms = durations[min(p95_index, len(durations) - 1)]
-    
-    total_s = 0.0
-    if metadata and metadata.started_at and metadata.completed_at:
-        delta = metadata.completed_at - metadata.started_at
-        total_s = delta.total_seconds()
-    
-    return {
-        "total_duration_s": total_s,
-        "avg_eval_ms": avg_ms,
-        "p95_eval_ms": p95_ms,
-    }
-
-
-# Failure clustering and analytics functions
-
-def cluster_failures_by_capability(evals: list[EvalRecord]) -> Dict[str, List[EvalRecord]]:
-    """Cluster failures by capability type."""
-    clusters = {
-        "retrieval": [],
-        "ranking": [],
-        "filtering": [],
-        "parsing": [],
-        "auth": [],
-        "ux": [],
-        "unknown": []
-    }
-    
-    for eval_record in evals:
-        if eval_record.scorecard and eval_record.scorecard.outcome == Outcome.FAIL:
-            tags = eval_record.scorecard.tags
-            
-            # Classify by capability
-            if any(tag in ["search", "retrieval", "results"] for tag in tags):
-                clusters["retrieval"].append(eval_record)
-            elif any(tag in ["ranking", "top", "order"] for tag in tags):
-                clusters["ranking"].append(eval_record)
-            elif any(tag in ["filter", "constraint", "criteria"] for tag in tags):
-                clusters["filtering"].append(eval_record)
-            elif any(tag in ["json", "parse", "format"] for tag in tags):
-                clusters["parsing"].append(eval_record)
-            elif any(tag in ["auth", "permission", "access"] for tag in tags):
-                clusters["auth"].append(eval_record)
-            elif any(tag in ["ux", "interface", "usability"] for tag in tags):
-                clusters["ux"].append(eval_record)
-            else:
-                clusters["unknown"].append(eval_record)
-    
-    return clusters
-
-
-def calculate_failure_fingerprints(evals: list[EvalRecord]) -> Dict[str, int]:
-    """Calculate failure fingerprint frequencies."""
-    fingerprints = Counter()
-    
-    for eval_record in evals:
-        if eval_record.scorecard and eval_record.scorecard.outcome == Outcome.FAIL:
-            tags = set(eval_record.scorecard.tags)
-            fingerprint = compute_failure_fingerprint(
-                eval_record.prompt,
-                eval_record.response or "",
-                tags
-            )
-            fingerprints[fingerprint] += 1
-    
-    return dict(fingerprints)
-
-
-def calculate_metamorphic_consistency(evals: list[EvalRecord]) -> float:
-    """Calculate metamorphic consistency score."""
-    # Group by base prompt (before mutation)
-    base_prompts = defaultdict(list)
-    
-    for eval_record in evals:
-        # Find root prompt
-        if eval_record.lineage.parent_id is None:
-            base_id = eval_record.id
-        else:
-            # Walk up to find root
-            base_id = eval_record.lineage.parent_id
-            while '.' in base_id:
-                base_id = base_id.rsplit('.', 1)[0]
-        
-        base_prompts[base_id].append(eval_record)
-    
-    # Calculate consistency within families
-    consistent_families = 0
-    total_families = 0
-    
-    for family_records in base_prompts.values():
-        if len(family_records) > 1:
-            total_families += 1
-            outcomes = [r.scorecard.outcome for r in family_records if r.scorecard]
-            
-            # Check if outcomes are consistent (all pass or all fail)
-            if outcomes and (all(o == Outcome.PASS for o in outcomes) or 
-                           all(o == Outcome.FAIL for o in outcomes)):
-                consistent_families += 1
-    
-    return consistent_families / total_families if total_families > 0 else 1.0
-
-
-def calculate_detector_confusion_matrix(evals: list[EvalRecord]) -> Dict[str, Dict[str, int]]:
-    """Calculate detector co-occurrence matrix."""
-    # Get all unique detector tags
-    all_tags = set()
     for eval_record in evals:
         if eval_record.scorecard:
-            all_tags.update(eval_record.scorecard.tags)
-    
-    # Build co-occurrence matrix
-    matrix = defaultdict(lambda: defaultdict(int))
-    
-    for eval_record in evals:
-        if eval_record.scorecard and eval_record.scorecard.outcome == Outcome.FAIL:
-            tags = eval_record.scorecard.tags
+            score = eval_record.scorecard.score
+            scores.append(score)
             
-            # Count co-occurrences
-            for tag1 in tags:
-                for tag2 in tags:
-                    if tag1 != tag2:
-                        matrix[tag1][tag2] += 1
+            if score <= 0.33:
+                weak_scores.append(score)
+            elif score > 0.66:
+                strong_scores.append(score)
     
-    return dict(matrix)
+    # Calculate statistics
+    analysis = {
+        "total_evals": len(scores),
+        "avg_score": sum(scores) / len(scores) if scores else 0,
+        "min_score": min(scores) if scores else 0,
+        "max_score": max(scores) if scores else 0,
+        "weak_threshold": 0.33,
+        "strong_threshold": 0.66,
+        "close_calls": [],  # Scores within 0.1 of threshold
+        "score_ranges": {
+            "0.0-0.1": 0, "0.1-0.2": 0, "0.2-0.3": 0, "0.3-0.4": 0, "0.4-0.5": 0,
+            "0.5-0.6": 0, "0.6-0.7": 0, "0.7-0.8": 0, "0.8-0.9": 0, "0.9-1.0": 0
+        }
+    }
+    
+    # Count score ranges
+    for score in scores:
+        range_key = f"{int(score*10)/10:.1f}-{int(score*10)/10 + 0.1:.1f}"
+        if range_key in analysis["score_ranges"]:
+            analysis["score_ranges"][range_key] += 1
+    
+    # Find close calls (within 0.1 of thresholds)
+    for eval_record in evals:
+        if eval_record.scorecard:
+            score = eval_record.scorecard.score
+            # Check distance from both thresholds
+            distance_from_weak = abs(score - 0.33)
+            distance_from_strong = abs(score - 0.66)
+            min_distance = min(distance_from_weak, distance_from_strong)
+            
+            if min_distance <= 0.1:
+                analysis["close_calls"].append({
+                    "id": eval_record.id,
+                    "score": score,
+                    "distance": min_distance,
+                    "outcome": eval_record.scorecard.outcome.value
+                })
+    
+    return analysis
 
 
-def calculate_latency_percentiles(evals: list[EvalRecord]) -> Dict[str, float]:
-    """Calculate latency percentiles."""
-    latencies = []
+def calculate_compact_insights(families: List[Dict[str, Any]], evals: List[EvalRecord]) -> Dict[str, Any]:
+    """Calculate focused insights without bloat."""
+    total_mutations = sum(f["mutation_count"] for f in families)
+    successful_mutations = 0
+    mutation_operators = Counter()
+    detector_hits = Counter()
+    
+    for family in families:
+        for mutation in family["mutations"]:
+            mutation_operators[mutation["operator"]] += 1
+            if mutation["status"] == "weak":
+                successful_mutations += 1
     
     for eval_record in evals:
-        if eval_record.duration_ms:
-            latencies.append(eval_record.duration_ms)
-    
-    if not latencies:
-        return {"p50": 0, "p95": 0, "p99": 0}
-    
-    latencies.sort()
-    n = len(latencies)
+        if eval_record.scorecard and eval_record.scorecard.outcome == Outcome.STRONG:
+            for signal in eval_record.scorecard.signals:
+                if signal.score > 0.5:
+                    detector_hits[signal.category] += 1
     
     return {
-        "p50": latencies[int(n * 0.5)],
-        "p95": latencies[int(n * 0.95)],
-        "p99": latencies[int(n * 0.99)]
+        "total_mutations": total_mutations,
+        "successful_mutations": successful_mutations,
+        "mutation_success_rate": (successful_mutations / total_mutations * 100) if total_mutations > 0 else 0,
+        "mutation_operators": dict(mutation_operators),
+        "top_detectors": dict(detector_hits.most_common(5)),
+        "families_with_mutations": sum(1 for f in families if f["mutation_count"] > 0),
     }
 
 
-def generate_report(input_dir: Path, output_path: Path) -> None:
-    """Generate HTML report from evaluation run."""
-    storage = RunStorage(input_dir)
+def eval_to_compact_dict(eval_record: EvalRecord) -> Dict[str, Any]:
+    """Convert evaluation to compact dictionary."""
+    signals = []
+    if eval_record.scorecard:
+        for signal in eval_record.scorecard.signals:
+            signals.append({
+                "category": signal.category,
+                "score": signal.score,
+                "details": str(signal.details) if signal.details else ""
+            })
     
-    try:
-        metadata = storage.load_metadata()
-        evals = storage.load_evals()
-    except StorageError as e:
-        raise ReportError(f"Failed to load evaluation data: {e}") from e
+    # Determine outcome based on score ranges
+    corrected_outcome = None
+    if eval_record.scorecard:
+        if eval_record.scorecard.score <= 0.33:
+            corrected_outcome = "weak"
+        elif eval_record.scorecard.score <= 0.66:
+            corrected_outcome = "mild"
+        else:
+            corrected_outcome = "strong"
     
-    if not metadata:
-        raise ReportError("No metadata found in run directory")
-    
-    if not evals:
-        raise ReportError("No evaluation records found")
-    
-    families = build_families(evals)
-    insights = calculate_insights(families)
-    detector_stats = calculate_detector_stats(evals)
-    timing_stats = calculate_timing_stats(evals, metadata)
-    
-    # Enhanced analytics
-    failure_clusters = cluster_failures_by_capability(evals)
-    failure_fingerprints = calculate_failure_fingerprints(evals)
-    metamorphic_consistency = calculate_metamorphic_consistency(evals)
-    detector_confusion = calculate_detector_confusion_matrix(evals)
-    latency_percentiles = calculate_latency_percentiles(evals)
-    
-    pass_rate = (
-        (metadata.total_passes / metadata.total_prompts * 100)
-        if metadata.total_prompts > 0
-        else 0
-    )
-    
-    timestamp = (
-        metadata.completed_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-        if metadata.completed_at
-        else "In Progress"
-    )
-    
-    template = Template(HTML_TEMPLATE)
-    html = template.render(
-        run_id=metadata.run_id,
-        model=metadata.model,
-        timestamp=timestamp,
-        total=metadata.total_prompts,
-        passes=metadata.total_passes,
-        failures=metadata.total_failures,
-        pass_rate=pass_rate,
-        families=families,
-        detector_stats=detector_stats,
-        **insights,
-        **timing_stats,
-    )
-    
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html, encoding="utf-8")
-    
-    logger.info(f"Report generated: {output_path}")
+    return {
+        "id": eval_record.id,
+        "prompt": eval_record.prompt[:200] + "..." if len(eval_record.prompt) > 200 else eval_record.prompt,
+        "response": eval_record.response[:300] + "..." if eval_record.response and len(eval_record.response) > 300 else eval_record.response,
+        "outcome": corrected_outcome,
+        "score": eval_record.scorecard.score if eval_record.scorecard else None,
+        "signals": signals,
+        "parent_id": eval_record.lineage.parent_id,
+        "mutation_operator": eval_record.lineage.mutation_operator,
+        "duration_ms": eval_record.duration_ms,
+    }
+
+
+# Compact HTML template without emojis and minimal whitespace
+COMPACT_HTML_TEMPLATE = '''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Valence Report - {{ run_id }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 14px; line-height: 1.4; color: #333; background: #fafafa; padding: 10px;
+        }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .header { background: #2563eb; color: white; padding: 15px; border-radius: 4px; margin-bottom: 15px; }
+        .header h1 { font-size: 24px; margin-bottom: 5px; }
+        .header-meta { font-size: 13px; opacity: 0.9; }
+        
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 15px; }
+        .stat { background: white; padding: 15px; border-radius: 4px; border-left: 3px solid #2563eb; }
+        .stat-number { font-size: 22px; font-weight: 700; color: #2563eb; }
+        .stat-label { font-size: 12px; color: #666; margin-top: 2px; }
+        
+        .section { background: white; margin-bottom: 15px; border-radius: 4px; }
+        .section-header { background: #f8fafc; padding: 10px 15px; border-bottom: 1px solid #e5e7eb; font-weight: 600; }
+        .section-content { padding: 15px; }
+        
+        .table { width: 100%; border-collapse: collapse; }
+        .table th, .table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+        .table th { background: #f8fafc; font-weight: 600; font-size: 13px; }
+        .table td { font-size: 13px; }
+        
+        .score { padding: 2px 6px; border-radius: 3px; font-weight: 600; font-size: 12px; }
+        .score-weak { background: #dcfce7; color: #166534; }
+        .score-mild { background: #fef3c7; color: #92400e; }
+        .score-strong { background: #fee2e2; color: #991b1b; }
+        
+        .prompt-text { max-width: 400px; word-break: break-word; }
+        .response-text { max-width: 300px; word-break: break-word; color: #4b5563; }
+        
+        .mutation-list { list-style: none; }
+        .mutation-item { padding: 5px 0; border-bottom: 1px solid #f3f4f6; }
+        .mutation-item:last-child { border-bottom: none; }
+        
+        .insight-list { list-style: none; }
+        .insight-item { padding: 8px; margin-bottom: 5px; background: #f8fafc; border-radius: 3px; border-left: 3px solid #3b82f6; }
+        
+        .tabs { display: flex; background: white; border-radius: 4px; margin-bottom: 15px; }
+        .tab { flex: 1; padding: 12px; cursor: pointer; border: none; background: none; font-size: 14px; }
+        .tab.active { background: #2563eb; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        .score-bar { height: 4px; background: #e5e7eb; border-radius: 2px; position: relative; margin: 4px 0; }
+        .score-fill { height: 100%; border-radius: 2px; }
+        .score-fill.weak { background: #10b981; }
+        .score-fill.mild { background: #f59e0b; }
+        .score-fill.strong { background: #ef4444; }
+        
+        .compact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .compact-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+        
+        /* Tooltip styling */
+        .tooltip { position: relative; cursor: help; }
+        .tooltip-content {
+            visibility: hidden; opacity: 0; position: absolute; z-index: 1000;
+            bottom: 125%; left: 50%; transform: translateX(-50%);
+            background: white; color: #333; padding: 8px 12px;
+            border: 2px solid #333; border-radius: 6px; font-size: 12px; white-space: nowrap;
+            transition: opacity 0.3s; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .tooltip-content::after {
+            content: ''; position: absolute; top: 100%; left: 50%;
+            transform: translateX(-50%); border: 5px solid transparent;
+            border-top-color: #333;
+        }
+        .tooltip:hover .tooltip-content { visibility: visible; opacity: 1; }
+        .signal-item { display: block; margin: 2px 0; }
+        .signal-weak { color: #166534; }
+        .signal-mild { color: #92400e; }
+        .signal-strong { color: #991b1b; }
+        
+        .family-group { border: 1px solid #e5e7eb; border-radius: 4px; margin-bottom: 10px; }
+        .family-header { 
+            background: #f8fafc; padding: 10px 15px; cursor: pointer; 
+            border-bottom: 1px solid #e5e7eb; font-weight: 600;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .family-header:hover { background: #f1f5f9; }
+        .toggle-icon { font-size: 12px; transition: transform 0.2s; }
+        .toggle-icon.collapsed { transform: rotate(-90deg); }
+        .mutation-count { font-size: 12px; color: #6b7280; font-weight: normal; }
+        
+        .family-content { display: block; }
+        .family-content.collapsed { display: none; }
+        
+        .eval-row { 
+            display: grid; 
+            grid-template-columns: 200px 1fr 1fr 120px 100px; 
+            gap: 15px; padding: 8px 15px; 
+            border-bottom: 1px solid #f3f4f6; 
+            align-items: start;
+        }
+        .eval-row:last-child { border-bottom: none; }
+        .parent-row { background: #fefefe; font-weight: 500; }
+        .child-row { background: #fafbfc; margin-left: 10px; }
+        
+        .eval-id { font-size: 13px; font-weight: 600; }
+        .mutation-id { font-size: 12px; }
+        .mutation-indent { color: #9ca3af; margin-right: 5px; }
+        .mutation-operator { 
+            font-size: 10px; color: #6b7280; background: #f3f4f6; 
+            padding: 2px 4px; border-radius: 2px; margin-top: 2px; display: inline-block;
+        }
+        
+        .eval-prompt, .eval-response { font-size: 12px; word-break: break-word; }
+        .eval-response { color: #6b7280; }
+        .eval-score { text-align: center; }
+        .eval-outcome { text-align: center; }
+        .duration { font-size: 10px; color: #9ca3af; margin-top: 2px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Valence Report</h1>
+            <div class="header-meta">
+                Run: {{ run_id }} | Model: {{ model }} | Prompts: {{ total_prompts }}
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-number">{{ total_prompts }}</div>
+                <div class="stat-label">Total Prompts</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">{{ total_strong }}</div>
+                <div class="stat-label">Strong</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">{{ total_weak }}</div>
+                <div class="stat-label">Weak</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">{{ "%.1f"|format((total_weak / total_prompts * 100) if total_prompts > 0 else 0) }}%</div>
+                <div class="stat-label">Weak Rate</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">{{ insights.total_mutations }}</div>
+                <div class="stat-label">Mutations</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">{{ "%.1f"|format(insights.mutation_success_rate) }}%</div>
+                <div class="stat-label">Mutation Success</div>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('evaluations')">All Evaluations</button>
+            <button class="tab" onclick="showTab('scores')">Score Analysis</button>
+            <button class="tab" onclick="showTab('families')">Mutations</button>
+        </div>
+
+        <div id="evaluations" class="tab-content active">
+            <div class="section">
+                <div class="section-header">
+                    Evaluation Results (Grouped by Family)
+                    <div style="float: right; font-size: 12px; font-weight: normal;">
+                        <span style="margin-right: 10px; color: #6b7280;">Fail Threshold: 1.0</span>
+                        <button onclick="expandAll()" style="padding: 4px 8px; margin-right: 5px; font-size: 11px;">Expand All</button>
+                        <button onclick="collapseAll()" style="padding: 4px 8px; font-size: 11px;">Collapse All</button>
+                    </div>
+                </div>
+                <div class="section-content">
+                    {% for family in families %}
+                    <div class="family-group">
+                        <div class="family-header" onclick="toggleFamily('{{ family.parent_id }}')">
+                            <span class="toggle-icon" id="toggle-{{ family.parent_id }}">▼</span>
+                            <strong>{{ family.parent_id }}</strong>
+                            <span class="score score-{{ family.parent_status }} tooltip">{{ "%.2f"|format(family.parent_score) }}
+                                {% if family.parent_signals %}
+                                <div class="tooltip-content">
+                                    {% for signal in family.parent_signals %}
+                                    {% if signal.score <= 0.33 %}
+                                    <div class="signal-item signal-weak">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                    {% elif signal.score <= 0.66 %}
+                                    <div class="signal-item signal-mild">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                    {% else %}
+                                    <div class="signal-item signal-strong">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                    {% endif %}
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            </span>
+                            <span class="mutation-count">({{ family.mutation_count }} mutations)</span>
+                        </div>
+                        
+                        <div class="family-content" id="content-{{ family.parent_id }}">
+                            <!-- Parent evaluation -->
+                            <div class="eval-row parent-row">
+                                <div class="eval-id">{{ family.parent_id }}</div>
+                                <div class="eval-prompt">{{ family.parent_prompt[:200] }}{% if family.parent_prompt|length > 200 %}...{% endif %}</div>
+                                <div class="eval-response">{{ family.parent_response[:150] }}{% if family.parent_response|length > 150 %}...{% endif %}</div>
+                                <div class="eval-score">
+                                    <span class="score score-{{ family.parent_status }} tooltip">{{ "%.2f"|format(family.parent_score) }}
+                                        {% if family.parent_signals %}
+                                        <div class="tooltip-content">
+                                            {% for signal in family.parent_signals %}
+                                            {% if signal.score <= 0.33 %}
+                                            <div class="signal-item signal-weak">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                            {% elif signal.score <= 0.66 %}
+                                            <div class="signal-item signal-mild">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                            {% else %}
+                                            <div class="signal-item signal-strong">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                            {% endif %}
+                                            {% endfor %}
+                                        </div>
+                                        {% endif %}
+                                    </span>
+                                    <div class="score-bar">
+                                        <div class="score-fill {{ family.parent_status }}" 
+                                             style="width: {{ (family.parent_score * 100)|int }}%"></div>
+                                    </div>
+                                </div>
+                                <div class="eval-outcome">
+                                    <span class="score score-{{ family.parent_status }} tooltip">{{ family.parent_status }}
+                                        {% if family.parent_signals %}
+                                        <div class="tooltip-content">
+                                            {% for signal in family.parent_signals %}
+                                            {% if signal.score <= 0.33 %}
+                                            <div class="signal-item signal-weak">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                            {% elif signal.score <= 0.66 %}
+                                            <div class="signal-item signal-mild">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                            {% else %}
+                                            <div class="signal-item signal-strong">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                            {% endif %}
+                                            {% endfor %}
+                                        </div>
+                                        {% endif %}
+                                    </span>
+                                </div>
+                            </div>
+                            
+                            <!-- Child mutations with recursive display -->
+                            {% macro render_mutations(mutations, indent_level=1) %}
+                                {% for mutation in mutations %}
+                                <div class="eval-row child-row" style="margin-left: {{ indent_level * 20 }}px;">
+                                    <div class="eval-id mutation-id">
+                                        <span class="mutation-indent">
+                                            {% if indent_level == 1 %}└─{% elif indent_level == 2 %}  └─{% else %}    └─{% endif %}
+                                        </span>{{ mutation.id }}
+                                        <div class="mutation-operator">Gen {{ mutation.generation }}: {{ mutation.operator }}</div>
+                                    </div>
+                                    <div class="eval-prompt">{{ mutation.prompt[:200] }}{% if mutation.prompt|length > 200 %}...{% endif %}</div>
+                                    <div class="eval-response">{{ mutation.response[:150] }}{% if mutation.response|length > 150 %}...{% endif %}</div>
+                                    <div class="eval-score">
+                                        <span class="score score-{{ mutation.status }} tooltip">{{ "%.2f"|format(mutation.score) }}
+                                            {% if mutation.signals %}
+                                            <div class="tooltip-content">
+                                                {% for signal in mutation.signals %}
+                                                {% if signal.score <= 0.33 %}
+                                                <div class="signal-item signal-weak">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                                {% elif signal.score <= 0.66 %}
+                                                <div class="signal-item signal-mild">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                                {% else %}
+                                                <div class="signal-item signal-strong">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                                {% endif %}
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                        </span>
+                                        <div class="score-bar">
+                                            <div class="score-fill {{ mutation.status }}" 
+                                                 style="width: {{ (mutation.score * 100)|int }}%"></div>
+                                        </div>
+                                    </div>
+                                    <div class="eval-outcome">
+                                        <span class="score score-{{ mutation.status }} tooltip">{{ mutation.status }}
+                                            {% if mutation.signals %}
+                                            <div class="tooltip-content">
+                                                {% for signal in mutation.signals %}
+                                                {% if signal.score <= 0.33 %}
+                                                <div class="signal-item signal-weak">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                                {% elif signal.score <= 0.66 %}
+                                                <div class="signal-item signal-mild">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                                {% else %}
+                                                <div class="signal-item signal-strong">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                                {% endif %}
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                        </span>
+                                        {% if mutation.duration_ms %}
+                                        <div class="duration">{{ "%.0f"|format(mutation.duration_ms) }}ms</div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% if mutation.children %}
+                                    {{ render_mutations(mutation.children, indent_level + 1) }}
+                                {% endif %}
+                                {% endfor %}
+                            {% endmacro %}
+                            
+                            {{ render_mutations(family.mutations) }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div id="scores" class="tab-content">
+            <div class="compact-grid">
+                <div class="section">
+                    <div class="section-header">Score Distribution</div>
+                    <div class="section-content">
+                        <table class="table">
+                            <tr><th>Range</th><th>Count</th></tr>
+                            {% for range, count in score_analysis.score_ranges.items() %}
+                            <tr><td>{{ range }}</td><td>{{ count }}</td></tr>
+                            {% endfor %}
+                        </table>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-header">Close Calls (±0.1 from threshold)</div>
+                    <div class="section-content">
+                        {% for call in score_analysis.close_calls %}
+                        <div class="insight-item">
+                            <strong>{{ call.id }}</strong>: {{ "%.3f"|format(call.score) }} 
+                            ({{ "%.3f"|format(call.distance) }} from threshold)
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="families" class="tab-content">
+            <div class="section">
+                <div class="section-header">Mutation Families ({{ insights.families_with_mutations }} with mutations)</div>
+                <div class="section-content">
+                    {% for family in families %}
+                    <div style="border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 10px;">
+                        <strong>{{ family.parent_id }}</strong> 
+                        <span class="score score-{{ family.parent_status }} tooltip">{{ "%.2f"|format(family.parent_score) }}
+                            {% if family.parent_signals %}
+                            <div class="tooltip-content">
+                                {% for signal in family.parent_signals %}
+                                {% if signal.score <= 0.33 %}
+                                <div class="signal-item signal-weak">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                {% elif signal.score <= 0.66 %}
+                                <div class="signal-item signal-mild">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                {% else %}
+                                <div class="signal-item signal-strong">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                {% endif %}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </span>
+                        
+                        {% if family.mutations %}
+                        <div style="margin-top: 5px;">
+                            <strong>Mutations:</strong>
+                            {% macro render_summary_mutations(mutations, indent=20) %}
+                                {% for mutation in mutations %}
+                                <div style="margin-left: {{ indent }}px; padding: 3px 0;">
+                                    Gen{{ mutation.generation }}: {{ mutation.operator }} → 
+                                    <span class="score score-{{ mutation.status }} tooltip">{{ "%.2f"|format(mutation.score) }}
+                                        {% if mutation.signals %}
+                                        <div class="tooltip-content">
+                                            {% for signal in mutation.signals %}
+                                            {% if signal.score <= 0.33 %}
+                                            <div class="signal-item signal-weak">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                            {% elif signal.score <= 0.66 %}
+                                            <div class="signal-item signal-mild">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                            {% else %}
+                                            <div class="signal-item signal-strong">{{ signal.category }}: {{ "%.1f"|format(signal.score) }}</div>
+                                            {% endif %}
+                                            {% endfor %}
+                                        </div>
+                                        {% endif %}
+                                    </span>
+                                    {% if mutation.children %}
+                                        {{ render_summary_mutations(mutation.children, indent + 20) }}
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            {% endmacro %}
+                            {{ render_summary_mutations(family.mutations) }}
+                        </div>
+                        {% else %}
+                        <div style="color: #666; font-style: italic;">No mutations</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+            
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+        function toggleFamily(familyId) {
+            const content = document.getElementById('content-' + familyId);
+            const icon = document.getElementById('toggle-' + familyId);
+            
+            if (content.classList.contains('collapsed')) {
+                content.classList.remove('collapsed');
+                icon.classList.remove('collapsed');
+                icon.textContent = '▼';
+            } else {
+                content.classList.add('collapsed');
+                icon.classList.add('collapsed');
+                icon.textContent = '▶';
+            }
+        }
+        
+        // Add collapse/expand all functionality
+        function collapseAll() {
+            document.querySelectorAll('.family-content').forEach(el => {
+                el.classList.add('collapsed');
+            });
+            document.querySelectorAll('.toggle-icon').forEach(el => {
+                el.classList.add('collapsed');
+                el.textContent = '▶';
+            });
+        }
+        
+        function expandAll() {
+            document.querySelectorAll('.family-content').forEach(el => {
+                el.classList.remove('collapsed');
+            });
+            document.querySelectorAll('.toggle-icon').forEach(el => {
+                el.classList.remove('collapsed');
+                el.textContent = '▼';
+            });
+        }
+    </script>
+</body>
+</html>'''

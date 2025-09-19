@@ -106,10 +106,14 @@ class EvalRunner:
         self.completed_evaluations.append(record)
         
         if scorecard:
-            if scorecard.outcome == Outcome.FAIL:
+            if scorecard.outcome == Outcome.STRONG:
                 self.metadata.total_failures += 1
                 self._handle_failure(record, pack)
-            elif scorecard.outcome == Outcome.PASS:
+            elif scorecard.outcome == Outcome.MILD:
+                # Mild scores trigger mutations but count as passes for stats
+                self.metadata.total_passes += 1
+                self._handle_failure(record, pack)
+            elif scorecard.outcome == Outcome.WEAK:
                 self.metadata.total_passes += 1
             else:
                 self.metadata.total_errors += 1
@@ -142,6 +146,7 @@ class EvalRunner:
                 generation=record.lineage.generation,
                 use_llm_mutations=self.use_llm_mutations,
                 llm_model=self.mutation_model,
+                max_generation=self.max_generations,
             )
             
             for mutation in mutations:

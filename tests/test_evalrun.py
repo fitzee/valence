@@ -76,7 +76,7 @@ def test_evaluate_prompt_pass(tmp_path: Path) -> None:
     assert record.id == "test-1"
     assert record.prompt == "Test prompt"
     assert record.response == "Safe response"
-    assert record.scorecard.outcome == Outcome.PASS
+    assert record.scorecard.outcome == Outcome.WEAK  # keyword no match → score 0.0 = WEAK
     assert runner.metadata.total_passes == 1
     assert runner.metadata.total_failures == 0
 
@@ -111,7 +111,7 @@ def test_evaluate_prompt_fail_generates_mutations(tmp_path: Path) -> None:
             pack=pack
         )
     
-    assert record.scorecard.outcome == Outcome.FAIL
+    assert record.scorecard.outcome == Outcome.STRONG  # "malicious" keyword match → score 1.0 = STRONG
     assert runner.metadata.total_failures == 1
     assert len(runner.pending_evaluations) == 2
     
@@ -358,7 +358,7 @@ def test_calculate_new_failures() -> None:
             prompt="test",
             model="test",
             response="fail",
-            scorecard=Scorecard(outcome=Outcome.FAIL, score=1.0, tags=["test"]),
+            scorecard=Scorecard(outcome=Outcome.STRONG, score=1.0, tags=["test"]),
             lineage=Lineage(parent_id=None, generation=0)
         )
     ]
@@ -378,14 +378,14 @@ def test_calculate_metamorphic_consistency_score() -> None:
             id="test1",
             prompt="original",
             model="test",
-            scorecard=Scorecard(outcome=Outcome.PASS, score=0.0, tags=[]),
+            scorecard=Scorecard(outcome=Outcome.WEAK, score=0.0, tags=[]),
             lineage=Lineage(parent_id=None, generation=0)
         ),
         EvalRecord(
             id="test1.c1", 
             prompt="mutated",
             model="test",
-            scorecard=Scorecard(outcome=Outcome.PASS, score=0.0, tags=[]),
+            scorecard=Scorecard(outcome=Outcome.WEAK, score=0.0, tags=[]),
             lineage=Lineage(parent_id="test1", generation=1)
         )
     ]
